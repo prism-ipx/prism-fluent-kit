@@ -16,7 +16,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.33.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
-        .package(url: "https://github.com/vapor/sql-kit.git", from: "3.1.0"),
+        .package(url: "https://github.com/vapor/sql-kit.git", .branch("experimental/instrumented-queries")),
         .package(url: "https://github.com/vapor/async-kit.git", from: "1.4.0"),
     ],
     targets: [

@@ -1,3 +1,5 @@
+import SQLKit
+
 public struct DatabaseQuery {
     public var schema: String
     public var customIDKey: FieldKey?
@@ -11,7 +13,7 @@ public struct DatabaseQuery {
     public var limits: [Limit]
     public var offsets: [Offset]
 
-    init(schema: String) {
+    init(schema: String, instrumenting: Bool = false) {
         self.schema = schema
         self.isUnique = false
         self.fields = []

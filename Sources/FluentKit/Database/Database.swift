@@ -1,3 +1,5 @@
+import SQLKit
+
 public protocol Database {
     var context: DatabaseContext { get }
     
@@ -5,6 +7,12 @@ public protocol Database {
         query: DatabaseQuery,
         onOutput: @escaping (DatabaseOutput) -> ()
     ) -> EventLoopFuture<Void>
+    
+    func execute(
+        instrumentedQuery: DatabaseQuery,
+        addingToPerfRecord: SQLQueryPerformanceRecord?,
+        onOutput: @escaping (DatabaseOutput) -> ()
+    ) -> EventLoopFuture<SQLQueryPerformanceRecord?>
 
     func execute(
         schema: DatabaseSchema
@@ -13,12 +21,32 @@ public protocol Database {
     func execute(
         enum: DatabaseEnum
     ) -> EventLoopFuture<Void>
-
+    
     var inTransaction: Bool { get }
 
     func transaction<T>(_ closure: @escaping (Database) -> EventLoopFuture<T>) -> EventLoopFuture<T>
     
     func withConnection<T>(_ closure: @escaping (Database) -> EventLoopFuture<T>) -> EventLoopFuture<T>
+}
+
+extension Database {
+    /// This gets a little tricky - because instrumentation is optional, the performance record has to be
+    /// optional. It also has to be passed in _and_ returned by value to retain any metrics recorded
+    /// by callers, while also simultaneously being as invisible as possible to those using the Database
+    /// API directly. Not very invisible, as it turns out... This method does not guarantee that the query
+    /// is instrumented, it just serves as an entry point for code paths which have the necessary extra
+    /// support for instrumentation if and when it is actually desired. There is unfortunately no other
+    /// way for the performance record to maintain its full complement of data (if any) in the futures
+    /// world. In a Concurrency world, there are much cleaner options... Meanwhile, this extension
+    /// implementation's only job is to act like nothing's changed for the sake of drivers that don't care
+    /// to deal with this... hassle.
+    public func execute(
+        instrumentedQuery query: DatabaseQuery,
+        addingToPerfRecord perfRecord: SQLQueryPerformanceRecord?,
+        onOutput: @escaping (DatabaseOutput) -> ()
+    ) -> EventLoopFuture<SQLQueryPerformanceRecord?> {
+        self.execute(query: query, onOutput: onOutput).transform(to: perfRecord)
+    }
 }
 
 extension Database {
@@ -45,6 +73,10 @@ extension Database {
     public var history: QueryHistory? {
         self.context.history
     }
+    
+    public var instrumentation: QueryInstrumentation? {
+        self.context.instrumentation
+    }
 
     public var pageSizeLimit: Int? {
         self.context.pageSizeLimit
@@ -66,6 +98,7 @@ public struct DatabaseContext {
     public let logger: Logger
     public let eventLoop: EventLoop
     public let history: QueryHistory?
+    public let instrumentation: QueryInstrumentation?
     public let pageSizeLimit: Int?
     
     public init(
@@ -73,12 +106,14 @@ public struct DatabaseContext {
         logger: Logger,
         eventLoop: EventLoop,
         history: QueryHistory? = nil,
+        instrumentation: QueryInstrumentation? = nil,
         pageSizeLimit: Int? = nil
     ) {
         self.configuration = configuration
         self.logger = logger
         self.eventLoop = eventLoop
         self.history = history
+        self.instrumentation = instrumentation
         self.pageSizeLimit = pageSizeLimit
     }
 }

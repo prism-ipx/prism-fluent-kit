@@ -1,5 +1,7 @@
 import AsyncKit
 import NIOCore
+import Dispatch
+import SQLKit
 
 public final class QueryBuilder<Model>
     where Model: FluentKit.Model
@@ -14,7 +16,7 @@ public final class QueryBuilder<Model>
 
     public convenience init(database: Database) {
         self.init(
-            query: .init(schema: Model.schema),
+            query: .init(schema: Model.schema, instrumenting: database.context.instrumentation != nil),
             database: database,
             models: [Model.self]
         )
@@ -216,30 +218,46 @@ public final class QueryBuilder<Model>
 
     public func all(_ onOutput: @escaping (Result<Model, Error>) -> ()) -> EventLoopFuture<Void> {
         var all: [Model] = []
+        let queryRunStart = DispatchTime.now()
+        var decodeTimeTotal = 0.0
 
-        let done = self.run { output in
+        let nearlyDone = self.run(submittingInstrumentation: false) { output in
             onOutput(.init(catching: {
+                let decodeStart = DispatchTime.now()
                 let model = Model()
                 try model.output(from: output.schema(Model.schema))
+                decodeTimeTotal += DispatchTime.secondsElapsed(since: decodeStart)
                 all.append(model)
                 return model
             }))
+        }.map { perfRecord -> SQLQueryPerformanceRecord? in
+            var perfRecord = perfRecord
+            perfRecord?.record(decodeTimeTotal, for: .highLevelModelOutputDuration)
+            return perfRecord
         }
 
         // if eager loads exist, run them, and update models
+        let almostDone: EventLoopFuture<SQLQueryPerformanceRecord?>
         if !self.eagerLoaders.isEmpty {
-            return done.flatMap {
+            almostDone = nearlyDone.flatMap { perfRecord in
                 // don't run eager loads if result set was empty
                 guard !all.isEmpty else {
-                    return self.database.eventLoop.makeSucceededFuture(())
+                    return self.database.eventLoop.makeSucceededFuture(perfRecord)
                 }
                 // run eager loads
                 return self.eagerLoaders.sequencedFlatMapEach(on: self.database.eventLoop) { loader in
                     return loader.anyRun(models: all, on: self.database)
                 }
+                .transform(to: perfRecord)
             }
         } else {
-            return done
+            almostDone = nearlyDone
+        }
+        return almostDone.map {
+            if var perfRecord = $0 {
+                perfRecord.record(DispatchTime.secondsElapsed(since: queryRunStart), for: .fullExecutionDuration)
+                self.database.context.instrumentation?.add(record: perfRecord)
+            }
         }
     }
 
@@ -250,9 +268,20 @@ public final class QueryBuilder<Model>
     }
 
     public func run(_ onOutput: @escaping (DatabaseOutput) -> ()) -> EventLoopFuture<Void> {
+        return self.run(submittingInstrumentation: true, onOutput).transform(to: ())
+    }
+    
+    /// - Parameter submittingInstrumentation: If `true` and instrumentation is enabled, this method will add the
+    ///   query performance record to the context's instrumentation and return `nil`. If `false` and instrumentation
+    ///   is enabled, the query performance record is returned to the caller. Ignored if instrumentation is disabled.
+    ///
+    /// This is here so we can add more metrics in `all()` before aggregating the metrics.
+    private func run(submittingInstrumentation: Bool, _ onOutput: @escaping (DatabaseOutput) -> ()) -> EventLoopFuture<SQLQueryPerformanceRecord?> {
         // make a copy of this query before mutating it
         // so that run can be called multiple times
         var query = self.query
+        let perfRecord = self.database.context.instrumentation != nil ? SQLQueryPerformanceRecord() : nil
+        let queryRunStart = DispatchTime.now()
 
         // If fields are not being manually selected,
         // add fields from all models being queried.
@@ -291,12 +320,23 @@ public final class QueryBuilder<Model>
         self.database.logger.debug("\(self.query)")
         self.database.history?.add(self.query)
 
-        let done = self.database.execute(query: query) { output in
+        let done = self.database.execute(instrumentedQuery: query, addingToPerfRecord: perfRecord) { output in
             assert(
                 self.database.eventLoop.inEventLoop,
                 "database driver output was not on eventloop"
             )
             onOutput(output)
+        }.map { perfRecord -> SQLQueryPerformanceRecord? in
+            guard var perfRecord = perfRecord else {
+                return nil
+            }
+            perfRecord.record(DispatchTime.secondsElapsed(since: queryRunStart), for: .fullExecutionDuration)
+            if submittingInstrumentation {
+                self.database.instrumentation?.add(record: perfRecord)
+                return nil
+            } else {
+                return perfRecord
+            }
         }
 
         done.whenComplete { _ in

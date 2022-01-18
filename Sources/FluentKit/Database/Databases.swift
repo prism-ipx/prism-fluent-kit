@@ -99,6 +99,7 @@ public final class Databases {
         logger: Logger,
         on eventLoop: EventLoop,
         history: QueryHistory? = nil,
+        instrumentation: QueryInstrumentation? = nil,
         pageSizeLimit: Int? = nil
     ) -> Database? {
         self.lock.lock()
@@ -112,6 +113,7 @@ public final class Databases {
             logger: logger,
             eventLoop: eventLoop,
             history: history,
+            instrumentation: instrumentation,
             pageSizeLimit: pageSizeLimit
         )
         let driver: DatabaseDriver
