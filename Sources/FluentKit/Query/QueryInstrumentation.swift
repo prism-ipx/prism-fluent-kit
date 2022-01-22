@@ -7,11 +7,6 @@ extension SQLQueryPerformanceRecord.Metric {
     /// The time taken to convert a Fluent `DatabaseQuery` into an `SQLExpression`.
     public static var queryASTGenerationDuration: Self { .init(string: "codes.vapor.fluentkit.metric.queryConversion") }
 
-    /// The number of result rows, if any, returned from a query. This metric has a value, even
-    /// if it is zero, if any attempt to retrieve results - including `RETURNING` clauses - was
-    /// made. If it has no value at all, the query did not check for or return any results.
-    public static var returnedResultRowCount: Self { .init(string: "codes.vapor.fluentkit.metric.resultCount") }
-    
     /// The time taken to convert `DatabaseOutput` "rows" into `Model` objects.
     public static var highLevelModelOutputDuration: Self { .init(string: "codes.vapor.fluentkit.metric.modelOutput") }
 }
