@@ -9,7 +9,8 @@ public final class QueryBuilder<Model>
     public let database: Database
     internal var includeDeleted: Bool
     internal var shouldForceDelete: Bool
-    internal var models: [Schema.Type]
+    private var WithAggregateSubqueries: Bool
+    public var models: [Schema.Type]
     public var eagerLoaders: [AnyEagerLoader]
 
     public convenience init(database: Database) {
@@ -26,7 +27,8 @@ public final class QueryBuilder<Model>
         models: [Schema.Type] = [],
         eagerLoaders: [AnyEagerLoader] = [],
         includeDeleted: Bool = false,
-        shouldForceDelete: Bool = false
+        shouldForceDelete: Bool = false,
+        withAggregateSubqueries: Bool = false
     ) {
         self.query = query
         self.database = database
@@ -57,19 +59,25 @@ public final class QueryBuilder<Model>
     }
 
     // MARK: Fields
-    
+
     @discardableResult
-    public func fields<Joined>(for model: Joined.Type) -> Self 
+    public func fields<Joined>(for model: Joined.Type) -> Self
         where Joined: Schema & Fields
     {
         self.addFields(for: Joined.self, to: &self.query)
         return self
     }
 
-    internal func addFields(for model: (Schema & Fields).Type, to query: inout DatabaseQuery) {
+    public func addFields(for model: (Schema & Fields).Type, to query: inout DatabaseQuery) {
         query.fields += model.keys.map { path in
             .extendedPath([path], schema: model.schemaOrAlias, space: model.space)
         }
+    }
+
+    public func addAggregateFields(for model: (Schema & Fields).Type, to query: inout DatabaseQuery) {
+      query.aggregateFields += model.aggregateFields.map { path in
+        path
+      }
     }
 
     @discardableResult
@@ -86,7 +94,7 @@ public final class QueryBuilder<Model>
         self.query.fields.append(.extendedPath(Joined.path(for: field), schema: Joined.schema, space: Joined.space))
         return self
     }
-    
+
     @discardableResult
     public func field(_ field: DatabaseQuery.Field) -> Self {
         self.query.fields.append(field)
@@ -121,7 +129,7 @@ public final class QueryBuilder<Model>
     }
 
     // MARK: Limit
-    
+
     @discardableResult
     public func limit(_ count: Int) -> Self {
         self.query.limits.append(.count(count))
@@ -155,7 +163,7 @@ public final class QueryBuilder<Model>
                 closure(partial)
                 partial = []
             }
-        }.flatMapThrowing { 
+        }.flatMapThrowing {
             // any stragglers
             if !partial.isEmpty {
                 closure(partial)
@@ -200,6 +208,11 @@ public final class QueryBuilder<Model>
                 try $0.joined(Joined.self)[keyPath: field].value!
             }
         }
+    }
+
+    public func withAggregateSubqueries() -> Self {
+        self.WithAggregateSubqueries = true
+        return self
     }
 
     public func all() -> EventLoopFuture<[Model]> {
@@ -263,7 +276,13 @@ public final class QueryBuilder<Model>
                 self.addFields(for: model, to: &query)
             }
         }
-
+        // If fields are not being manually selected,
+        // add fields from all models being queried.
+        if WithAggregateSubqueries && query.aggregateFields.isEmpty {
+            for model in self.models {
+                self.addAggregateFields(for: model, to: &query)
+            }
+        }
         // If deleted models aren't included, add filters
         // to exclude them for each model being queried.
         if !self.includeDeleted {

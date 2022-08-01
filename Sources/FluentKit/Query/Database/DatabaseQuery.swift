@@ -4,6 +4,7 @@ public struct DatabaseQuery {
     public var customIDKey: FieldKey?
     public var isUnique: Bool
     public var fields: [Field]
+    public var aggregateFields: [AggregateFieldSubquery]
     public var action: Action
     public var filters: [Filter]
     public var input: [Value]
@@ -17,6 +18,7 @@ public struct DatabaseQuery {
         self.space = space
         self.isUnique = false
         self.fields = []
+        self.aggregateFields = []
         self.action = .read
         self.filters = []
         self.input = []
@@ -42,6 +44,9 @@ extension DatabaseQuery: CustomStringConvertible {
         }
         if !self.fields.isEmpty {
             parts.append("fields=\(self.fields)")
+        }
+        if !self.aggregateFields.isEmpty {
+            parts.append("AggregateFields=\(self.aggregateFields)")
         }
         if !self.filters.isEmpty {
             parts.append("filters=\(self.filters)")

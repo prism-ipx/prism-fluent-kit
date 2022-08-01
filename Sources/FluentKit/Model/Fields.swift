@@ -50,6 +50,14 @@ extension Fields {
         }
     }
 
+    public static var aggregateFields: [DatabaseQuery.AggregateFieldSubquery] {
+        self.init().properties.compactMap {
+            $0 as? AggregateDatabaseProperty
+        }.flatMap {
+          $0.aggregates
+        }
+    }
+
     public func input(to input: DatabaseInput) {
         self.properties.compactMap {
             $0 as? AnyDatabaseProperty
@@ -63,6 +71,12 @@ extension Fields {
             $0 as? AnyDatabaseProperty
         }.forEach { field in
             try field.output(from: output)
+        }
+
+        try self.properties.compactMap {
+            $0 as? AggregateDatabaseProperty
+        }.forEach { field in
+          try field.output(from: output)
         }
     }
 }
